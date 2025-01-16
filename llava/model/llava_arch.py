@@ -191,9 +191,11 @@ class LlavaMetaForCausalLM(ABC):
 
     def encode_images(self, images):
         image_features = self.get_model().get_vision_tower()(images)
+        #TODO: 为了bf16可以跑，但是不知道有没有别的问题
         image_features = image_features.to(torch.bfloat16)
         # image_features = self.get_model().vision_resampler(image_features, images=images)
         image_features = self.get_model().mm_projector(image_features)
+        #TODO: 为了bf16可以跑，但是不知道有没有别的问题
         image_features = image_features.to(torch.bfloat16)
         return image_features
     
@@ -417,7 +419,8 @@ class LlavaMetaForCausalLM(ABC):
                 raise ValueError(f"Unexpected mm_patch_merge_type: {self.config.mm_patch_merge_type}")
         else:
             image_features = self.encode_images(images)
-
+        print("len(image_features)", len(image_features))
+        print("image features shape", image_features[0].shape)
         # TODO: image start / end is not implemented here to support pretraining.
         if getattr(self.config, "tune_mm_mlp_adapter", False) and getattr(self.config, "mm_use_im_start_end", False):
             raise NotImplementedError

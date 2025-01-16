@@ -25,18 +25,31 @@ from PIL import Image
 
 import numpy as np
 
-def split_list(lst, n):
-    """Split a list into n (roughly) equal-sized chunks"""
-    chunk_size = math.ceil(len(lst) / n)  # integer division
-    return [lst[i : i + chunk_size] for i in range(0, len(lst), chunk_size)]
+ 
+from decord import VideoReader, cpu
+import numpy as np
+class Dummy_Vedio:
+    def __init__(self,video_path):
+        vr = VideoReader(video_path, ctx=cpu(0),num_threads=1)
+        total_frame_num = len(vr)  # 获取视频的总帧数
+        frame_idx = list(range(total_frame_num))  # 生成所有帧的索引
+        all_frames = vr.get_batch(frame_idx).asnumpy()  # 获取帧并转换为NumPy数组
+        self.all_frames = np.repeat(all_frames, 1, axis=0)  # 扩展第一个维度
+        self.total_frame= self.all_frames.shape[0]
+        self.index = 0
+        print("total frame",self.total_frame)
+        print("frame shape",self.all_frames[self.index].shape)
+    def get_new_frame(self):
+        if self.index < self.total_frame:
+            frame = self.all_frames[self.index]
+            self.index += 1
+            return frame
+        else:
+            return None
+        
 
 
-def get_chunk(lst, n, k):
-    chunks = split_list(lst, n)
-    return chunks[k]
-
-
-
+ 
 def parse_args():
     """
     Parse command-line arguments.
@@ -68,46 +81,11 @@ def parse_args():
     parser.add_argument("--add_time_instruction", type=str, default=False)
     return parser.parse_args()
 
-def load_video(video_path,args):
-    if args.for_get_frames_num == 0:
-        return np.zeros((1, 336, 336, 3))
-    # 使用 VideoReader 从 video_path 路径加载视频，ctx=cpu(0) 表示使用 CPU（第 0 个核心）进行计算，num_threads=1 表示只用一个线程读取视频
-    vr = VideoReader(video_path, ctx=cpu(0),num_threads=1)
-    print(type(vr))
-    total_frame_num = len(vr) # total_frame_num 是视频中的总帧数（通过读取视频的长度来确定）。
-    video_time = total_frame_num / vr.get_avg_fps() # video_time 是视频的总时长（通过总帧数除以帧率来计算）
-    fps = round(vr.get_avg_fps()) # fps 是视频的帧率（通过 VideoReader 对象的 get_avg_fps 方法来获取）
-    frame_idx = [i for i in range(0, len(vr), fps)] # frame_idx 是一个列表，包含按帧率间隔采样的帧的索
-    frame_time = [i/fps for i in frame_idx]  
-    if len(frame_idx) > args.for_get_frames_num or args.force_sample:
-        sample_fps = args.for_get_frames_num
-        uniform_sampled_frames = np.linspace(0, total_frame_num - 1, sample_fps, dtype=int)
-        frame_idx = uniform_sampled_frames.tolist()
-        frame_time = [i/vr.get_avg_fps() for i in frame_idx]
-    frame_time = ",".join([f"{i:.2f}s" for i in frame_time])
-    spare_frames = vr.get_batch(frame_idx).asnumpy()
-    # import pdb;pdb.set_trace()
-
-    return spare_frames,frame_time,video_time
+ 
 
 
 
-
-def load_video_base64(path):
-    # 将视频文件中的每一帧图像提取出来并转换为 Base64 编码的字符串
-    video = cv2.VideoCapture(path)
-
-    base64Frames = []
-    while video.isOpened():
-        success, frame = video.read() # 逐帧读取视频。success 表示帧是否成功读取，frame 是读取的当前帧图像数据（一个 NumPy 数组）
-        if not success:
-            break
-        _, buffer = cv2.imencode(".jpg", frame) # 将读取的帧图像 frame 编码为 JPEG 格式
-        base64Frames.append(base64.b64encode(buffer).decode("utf-8")) # 转换为 Base64
-
-    video.release()
-    # print(len(base64Frames), "frames read.")
-    return base64Frames
+ 
 
 
 def run_inference(args):
@@ -163,34 +141,9 @@ def run_inference(args):
     else:
         args.add_time_instruction = False
 
-    # Create the output directory if it doesn't exist
-    if not os.path.exists(args.output_dir):
-        os.makedirs(args.output_dir)
 
-    output_name = args.output_name
-    answers_file = os.path.join(args.output_dir, f"{output_name}.json")
-    ans_file = open(answers_file, "w")
-
-    video_path = args.video_path
-    sample_set = {}
     question = args.prompt
-    print("question",question)
-    sample_set["Q"] = question
-    sample_set["video_name"] = video_path
-    # Check if the video exists
-    if os.path.exists(video_path):
-        video,frame_time,video_time = load_video(video_path, args)
-        video = image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
-        video = [video]
-    print(len(video[0]))
-    print( (video[0].shape)) # torch.Size([4, 3, 384, 384])
-    # Run inference on the video and add the output to the list
-     
     qs = question
-    args.add_time_instruction = False
-    if args.add_time_instruction:
-        time_instruciton = f"The video lasts for {video_time:.2f} seconds, and {len(video[0])} frames are uniformly sampled from it. These frames are located at {frame_time}.Please answer the following questions related to this video."
-        qs = f'{time_instruciton}\n{qs}'
     if model.config.mm_use_im_start_end:
         qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + "\n" + qs
     else:
@@ -212,39 +165,47 @@ def run_inference(args):
     stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
     keywords = [stop_str]
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
-
-
-    with torch.inference_mode():
-        if "mistral" not in cfg_pretrained._name_or_path.lower():
-            output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", do_sample=False, 
+    dummy_vedio = Dummy_Vedio( args.video_path)
+    frame_queue = []
+    gap = 10
+    while True:
+        frame = dummy_vedio.get_new_frame()
+        if frame is None:
+            break
+        frame_queue.append(frame)
+        if len(frame_queue) == gap:
+            vedio_clip = np.stack(frame_queue, axis=0) # 
+            print("vedio_clip",vedio_clip.shape)
+            video = image_processor.preprocess(vedio_clip, return_tensors="pt")["pixel_values"].half().cuda()
+            video = [video]
+            print("video",video[0].shape)
+            with torch.inference_mode():
+                output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", do_sample=False, 
                                         temperature=0.0, max_new_tokens=1024, top_p=0.1,num_beams=1,use_cache=True, stopping_criteria=[stopping_criteria])
-        else:
-            output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", 
-                                        do_sample=False, temperature=0.0, max_new_tokens=1024, top_p=0.1, num_beams=1, use_cache=True)
+                outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+                print("================================")
+                print(f"Question: {prompt}\n")
+                print("================================")
+                print(f"Response: {outputs}\n")
+                print("================================")
+                print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024)
+            frame_queue = []
+    if len(frame_queue) > 0:
+        vedio_clip = np.stack(frame_queue, axis=0)        
+
+
  
         
-    outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
     
-    print("================================")
-    print(f"Question: {prompt}\n")
-    print("================================")
-    print(f"Response: {outputs}\n")
-    print("================================")
-    print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024)
 
-    if "mistral" not in cfg_pretrained._name_or_path.lower():
-        if outputs.endswith(stop_str):
-            outputs = outputs[: -len(stop_str)]
 
-    outputs = outputs.strip()
+ 
+ 
 
-    sample_set["pred"] = outputs
-    ans_file.write(json.dumps(sample_set, ensure_ascii=False) + "\n")
-    ans_file.flush()
-
-    ans_file.close()
+ 
 
 
 if __name__ == "__main__":
     args = parse_args()
     run_inference(args)
+
