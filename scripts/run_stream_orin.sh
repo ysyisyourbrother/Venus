@@ -11,5 +11,5 @@ python stream_orin.py  \
 --mm_newline_position no_token \
 --overwrite true \
 --load_8bit false \
---load_4bit false
+--load_4bit true
   

@@ -1,6 +1,6 @@
 import argparse
 import torch
-
+import time 
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from llava.conversation import conv_templates, SeparatorStyle
 from llava.model.builder import load_pretrained_model
@@ -167,7 +167,8 @@ def run_inference(args):
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
     dummy_vedio = Dummy_Vedio( args.video_path)
     frame_queue = []
-    gap = 10
+    gap = 1 # 一次query的帧数
+    query_time = 0 # 循环推理次数
     while True:
         frame = dummy_vedio.get_new_frame()
         if frame is None:
@@ -176,20 +177,31 @@ def run_inference(args):
         if len(frame_queue) == gap:
             vedio_clip = np.stack(frame_queue, axis=0) # 
             print("vedio_clip",vedio_clip.shape)
+            start_time = time.perf_counter()
             video = image_processor.preprocess(vedio_clip, return_tensors="pt")["pixel_values"].half().cuda()
+            end_time = time.perf_counter()
+            print("image_processor time:", (end_time - start_time) * 1000, "ms")
             video = [video]
             print("video",video[0].shape)
             with torch.inference_mode():
+                query_time += 1
+                print("================================")
+                start_time  = time.perf_counter()
                 output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", do_sample=False, 
                                         temperature=0.0, max_new_tokens=1024, top_p=0.1,num_beams=1,use_cache=True, stopping_criteria=[stopping_criteria])
                 outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+                end_time = time.perf_counter()
+                print("query time:", (end_time - start_time) * 1000, "ms")
+                print("decodeing token:",output_ids.shape )
                 print("================================")
                 print(f"Question: {prompt}\n")
                 print("================================")
                 print(f"Response: {outputs}\n")
                 print("================================")
-                print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024)
+                print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024,"GB")
             frame_queue = []
+        if query_time == 3:
+            break
     if len(frame_queue) > 0:
         vedio_clip = np.stack(frame_queue, axis=0)        
 

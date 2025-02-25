@@ -6,7 +6,7 @@ from llava.conversation import conv_templates, SeparatorStyle
 from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from llava.mm_utils import process_anyres_image,tokenizer_image_token, get_model_name_from_path, KeywordsStoppingCriteria
-
+import time 
 import json
 import os
 import math
@@ -172,8 +172,8 @@ def run_inference(args):
     stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
     stream_vedio = StreamVedio(args.video_path)
     frame_queue = []
-    gap = 1
-    for i in range (2) :#TODO: 
+    gap = 4
+    for i in range (3) :#TODO: 
         frame = stream_vedio.get_new_frame()
         if frame is None:
             break
@@ -185,15 +185,21 @@ def run_inference(args):
             video = [video]
             print("video",video[0].shape)
             with torch.inference_mode():
+                print("================================")
+                start_time  = time.perf_counter()
+                
                 output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", do_sample=False, 
                                         temperature=0.0, max_new_tokens=1024, top_p=0.1,num_beams=1,use_cache=True, stopping_criteria=[stopping_criteria])
                 outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+                end_time = time.perf_counter()
+                print("query time:", (end_time - start_time) * 1000, "ms")
+                print("decodeing token:",output_ids.shape )
                 print("================================")
                 print(f"Question: {prompt}\n")
                 print("================================")
                 print(f"Response: {outputs}\n")
                 print("================================")
-                print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024)
+                print(torch.torch.cuda.max_memory_allocated()/1024/1024/1024,"GB")
             frame_queue = []
     if len(frame_queue) > 0:
         vedio_clip = np.stack(frame_queue, axis=0)        

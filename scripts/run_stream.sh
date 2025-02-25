@@ -11,6 +11,6 @@ python stream.py \
     --mm_spatial_pool_mode average \
     --mm_newline_position no_token \
     --overwrite true \
-    --load_8bit false \
+    --load_8bit true \
     --load_4bit false
   
