@@ -6,7 +6,7 @@ __pycache__/
 temp/
 # C extensions
 *.so
-
+*.pt
 # Distribution / packaging
 .Python
 build/
@@ -163,3 +163,4 @@ cython_debug/
 #.idea/
 demo/qinhaiyao.mp4
 1.py
+restore/*

@@ -15,7 +15,8 @@ def build_vision_tower(vision_tower_cfg, **kwargs):
     is_absolute_path_exists = os.path.exists(vision_tower)
     use_s2 = getattr(vision_tower_cfg, "s2", False)
     if "siglip" in vision_tower:
-        return SigLipVisionTower(vision_tower, vision_tower_cfg=vision_tower_cfg, **kwargs)
+        return SigLipVisionTower(vision_tower,
+                                 vision_tower_cfg=vision_tower_cfg, **kwargs)
     
     raise ValueError(f"Unknown vision tower: {vision_tower}")
     

@@ -42,7 +42,9 @@ class LlavaQwenModel(LlavaMetaModel, Qwen2Model):
 
     def __init__(self, config: Qwen2Config):
         super(LlavaQwenModel, self).__init__(config)
-   
+
+
+ 
 class LlavaQwenForCausalLM(Qwen2ForCausalLM, LlavaMetaForCausalLM):
     config_class = LlavaQwenConfig
 

@@ -18,11 +18,7 @@ from transformers import AutoConfig
 import cv2
 import base64
 # import openai
-
 from PIL import Image
-
-
-
 import numpy as np
 
 def split_list(lst, n):
@@ -152,6 +148,7 @@ def run_inference(args):
                                                                                 load_8bit=args.load_8bit, 
                                                                                 load_4bit=args.load_4bit, 
                                                                                )
+    print(model)
     print(model.dtype)
     if getattr(model.config, "force_sample", None) is not None:
         args.force_sample = model.config.force_sample
@@ -180,6 +177,8 @@ def run_inference(args):
     # Check if the video exists
     if os.path.exists(video_path):
         video,frame_time,video_time = load_video(video_path, args)
+        print(len(video))
+        print(video.shape)
         video = image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
         video = [video]
     print(len(video[0]))
@@ -221,7 +220,7 @@ def run_inference(args):
         else:
             output_ids = model.generate(inputs=input_ids, images=video, attention_mask=attention_masks, modalities="video", 
                                         do_sample=False, temperature=0.0, max_new_tokens=1024, top_p=0.1, num_beams=1, use_cache=True)
- 
+
         
     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
     
