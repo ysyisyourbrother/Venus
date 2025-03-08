@@ -1,0 +1,83 @@
+[
+  {
+    "video_id": "434",
+    "duration": "medium",
+    "domain": "Sports Competition",
+    "sub_category": "Esports",
+    "questions": [
+      {
+        "question_id": "434-1",
+        "task_type": "Action Recognition",
+        "question": "What does Vayne do at the beginning of the game?",
+        "options": [
+          "A. Helping teammate jungle.",
+          "B. Attacking the top of the enemy.",
+          "C. Attacking the jungle of the enemy.",
+          "D. Staying at the fountain."
+        ],
+        "answer": "C",
+        "response": ""
+      },
+      {
+        "question_id": "434-2",
+        "task_type": "Action Recognition",
+        "question": "Which skill is used first by Vayne?",
+        "options": ["A. Haste.", "B. Flash.", "C. Exhaust.", "D. Teleport."],
+        "answer": "A",
+        "response": ""
+      },
+      {
+        "question_id": "434-3",
+        "task_type": "Object Recognition",
+        "question": "Which position is Vayne in this video?",
+        "options": ["A. Jungle.", "B. Support.", "C. Mid.", "D. Top."],
+        "answer": "D",
+        "response": ""
+      }
+    ],
+    "url": "0FM64MrRuZE"
+  },
+  {
+    "video_id": "892",
+    "duration": "long",
+    "domain": "Multilingual",
+    "sub_category": "Multilingual",
+    "questions": [
+      {
+        "question_id": "892-1",
+        "task_type": "OCR Problems",
+        "question": "After #41 completed his free throws, how many points was the team the author was rooting for ahead or behind the other team?",
+        "options": [
+          "A. 6 points ahead of the other team.",
+          "B. Trailing the other team by 12 points.",
+          "C. 12 points ahead of the other team.",
+          "D. Trailing the other team by 13 points."
+        ],
+        "answer": "B",
+        "response": ""
+      },
+      {
+        "question_id": "892-2",
+        "task_type": "OCR Problems",
+        "question": "As depicted in the video, what was the halftime score between the two teams?",
+        "options": ["A. 32 - 23.", "B. 27 - 16.", "C. 18 - 6.", "D. 37 - 27."],
+        "answer": "A",
+        "response": ""
+      },
+      {
+        "question_id": "892-3",
+        "task_type": "Object Reasoning",
+        "question": "What is the most likely role of the person shooting the video?",
+        "options": [
+          "A. The team's coach.",
+          "B. Student volunteers.",
+          "C. Players' families.",
+          "D. Replacements."
+        ],
+        "answer": "C",
+        "response": ""
+      }
+    ],
+    "url": "8UQFaVCV8S8"
+  }
+]

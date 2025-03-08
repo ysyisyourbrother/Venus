@@ -5,7 +5,7 @@ from llava.mm_utils import get_model_name_from_path, process_images, tokenizer_i
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, IGNORE_INDEX
 from llava.conversation import conv_templates, SeparatorStyle
 import torch
-from transformers import AutoProcessor, LlavaForConditionalGeneration, CLIPProcessor, CLIPModel, WhisperForConditionalGeneration, WhisperProcessor
+from transformers import AutoProcessor, WhisperForConditionalGeneration, WhisperProcessor, CLIPProcessor, CLIPModel
 import copy
 from decord import VideoReader, cpu
 import numpy as np
@@ -18,34 +18,19 @@ import re
 import ast
 import socket
 import pickle
-from tools.filter_keywords import filter_keywords
-from tools.scene_graph import generate_scene_graph_description
 import torchaudio, ffmpeg
+from tools.scene_graph import generate_scene_graph_description
+from longvideobench import LongVideoBenchDataset
 
-
-device = "cuda"
-max_frames_num =  16 # TODO:64 会OOM 
-rag_threshold = 0.3
-clip_threshold = 0.3
-beta = 3.0 
-USE_OCR = True
-USE_ASR = False
-USE_DET = False
-print(f"---------------OCR{rag_threshold}: {USE_OCR}-----------------")
-print(f"---------------ASR{rag_threshold}: {USE_ASR}-----------------")
-print(f"---------------DET{beta}-{clip_threshold}: {USE_DET}-----------------")
-print(f"---------------Frames: {max_frames_num}-----------------")
-if USE_DET:
-    clip_model = CLIPModel.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336", 
-                                           torch_dtype=torch.float16).to(device)
-                                           
-    clip_processor = CLIPProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336")
-if USE_ASR:
-    whisper_model = WhisperForConditionalGeneration.from_pretrained(
-            "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large",
-            torch_dtype=torch.float16,
-        ).to(device)
-    whisper_processor = WhisperProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/whisper-large")
+max_frames_num = 64
+clip_model = CLIPModel.from_pretrained("clip-vit-large-patch14-336", torch_dtype=torch.float16, device_map="auto")
+clip_processor = CLIPProcessor.from_pretrained("clip-vit-large-patch14-336")
+whisper_model = WhisperForConditionalGeneration.from_pretrained(
+    "whisper-large",
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
+whisper_processor = WhisperProcessor.from_pretrained("whisper-large")
 
 def process_video(video_path, max_frames_num, fps=1, force_sample=False):
     if max_frames_num == 0:
@@ -63,6 +48,7 @@ def process_video(video_path, max_frames_num, fps=1, force_sample=False):
         frame_time = [i/vr.get_avg_fps() for i in frame_idx]
     frame_time = ",".join([f"{i:.2f}s" for i in frame_time])
     spare_frames = vr.get_batch(frame_idx).asnumpy()
+
     return spare_frames, frame_time, video_time
 
 def extract_audio(video_path, audio_path):
@@ -95,6 +81,7 @@ def transcribe_chunk(chunk):
 def get_asr_docs(video_path, audio_path):
 
     full_transcription = []
+
     try:
         extract_audio(video_path, audio_path)
     except:
@@ -106,6 +93,29 @@ def get_asr_docs(video_path, audio_path):
         full_transcription.append(transcription)
 
     return full_transcription
+
+def chunk_subtitles(text_list, chunk_size=20):
+    result = []
+    current_chunk = []
+    word_count = 0
+    
+    for text in text_list:
+        words = text.split()
+        
+        for word in words:
+            current_chunk.append(word)
+            word_count += 1
+            
+            if word_count >= chunk_size:
+                result.append(' '.join(current_chunk))
+                current_chunk = []
+                word_count = 0
+
+    if current_chunk:
+        result.append(' '.join(current_chunk))
+    
+    return result
+
 
 def get_ocr_docs(frames):
     reader = easyocr.Reader(['en']) 
@@ -170,17 +180,16 @@ def det_preprocess(det_docs, location, relation, number):
     
     return scene_descriptions
 
+device = "cuda"
 overwrite_config = {}
-overwrite_config["mm_spatial_pool_mode"] =  "average"
+overwrite_config['mm_vision_tower'] = "siglip-so400m-patch14-384" 
 tokenizer, model, image_processor, max_length = load_pretrained_model(
-    "/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-Video-7B-Qwen2", 
+    "LLaVA-Video-7B-Qwen2", 
     None, 
     "llava_qwen", 
     torch_dtype="bfloat16", 
-      load_in_8bit=False,
-    load_in_4bit=True,
-      overwrite_config=overwrite_config, 
-    device_map="auto")  # Add any other thing you want to pass in llava_model_args
+    device_map="auto", 
+    overwrite_config=overwrite_config)  # Add any other thing you want to pass in llava_model_args
 model.eval()
 conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
 
@@ -195,7 +204,6 @@ def llava_inference(qs, video):
     conv.append_message(conv.roles[1], None)
     prompt_question = conv.get_prompt()
     input_ids = tokenizer_image_token(prompt_question, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(device)
-    
     if video is not None:
         cont = model.generate(
             input_ids,
@@ -203,7 +211,7 @@ def llava_inference(qs, video):
             modalities= ["video"],
             do_sample=False,
             temperature=0,
-            max_new_tokens=16, #TODO: 16 ?
+            max_new_tokens=16,
             top_p=1.0,
             num_beams=1
         )
@@ -216,37 +224,45 @@ def llava_inference(qs, video):
             temperature=0,
             max_new_tokens=4096,
         )
-    
     text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
-    return text_outputs 
-# save frame: for DET 
-file_name = f"generate_videomme"
+    return text_outputs, input_ids.size(1)
+
+rep_list = []
+rag_threshold = 0.3
+asr_chunk_size = 5
+clip_threshold = 0.3
+beta = 3.0 
+USE_OCR = True
+USE_ASR = True
+USE_DET = True
+print(f"---------------OCR{rag_threshold}: {USE_OCR}-----------------")
+print(f"---------------ASR{rag_threshold}: {USE_ASR}-----------------")
+print(f"---------------DET{beta}-{clip_threshold}: {USE_DET}-----------------")
+print(f"---------------Frames: {max_frames_num}-----------------")
+
+file_name = f"LVB_Video-RAG"
 file_path = os.path.join("restore", file_name)
 if not os.path.exists(file_path):
     os.mkdir(file_path)
-data_path = "/root/nfs/download/dataset/lmms-lab/Video-MME"
-print("MME data path: ", data_path)
-# TODO: change to videomme_json_file.json (complete file)
-with open("eval/mme_test.json", 'r', encoding='utf-8') as file:
-    mme_data = json.load(file)
-    
-# save result 
-os.makedirs("eval/results", exist_ok=True)
-json_file = f"eval/results/{file_name}.json"
+data_path = "/path/to/LongVideoBenchData"
+json_file = f"results/{file_name}.json"
+letter = ['A. ', 'B. ', 'C. ', 'D. ', 'E. ']
 
-rep_list = []  # 这个的作用是读取之前测试的结果，然后继续测试
+# test set
+# mme_data = LongVideoBenchDataset(data_path, "lvb_test_wo_gt.json", max_num_frames=max_frames_num).data
+
+# val set
+mme_data = LongVideoBenchDataset(data_path, "lvb_val.json", max_num_frames=max_frames_num).data
+
 if os.path.exists(json_file):
     with open(json_file, 'r', encoding='utf-8') as file:
         rep_list = json.load(file)
+
 index = len(rep_list)
-print("index:",index)
-# 遍历数据
 for item in tqdm(mme_data[index:], desc="Processing items"):
-    # item 包含视频路径，视频类别，问题，以及答案
-    video_path = os.path.join(data_path, item['url'] + ".mp4")
-    print("===========================================================rep_list")
-    print("video_path:",video_path)
-    content = item.copy()
+
+    video_path = os.path.join(data_path, "videos", item['video_path'])
+    content = {}
     frames, frame_time, video_time = process_video(video_path, max_frames_num, 1, force_sample=True)
     raw_video = [f for f in frames]
 
@@ -263,23 +279,24 @@ for item in tqdm(mme_data[index:], desc="Processing items"):
     if USE_OCR:
         ocr_docs_total = get_ocr_docs(frames)
 
-    if USE_ASR: 
-     if os.path.exists(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt")): 
-         with open(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt"), 'r', encoding='utf-8') as f: 
-             asr_docs_total = f.readlines() 
-     else: 
-         audio_path = os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".wav") 
-         asr_docs_total = get_asr_docs(video_path, audio_path) 
-         with open(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt"), 'w', encoding='utf-8') as f: 
-             for doc in asr_docs_total: 
-                 f.write(doc + '\n') 
-    # 遍历不同的问题 (一个视频可能有多个问题)
-    for q_num, question in enumerate(content['questions']):
-        print("question:", question['question'])
-        # step 0: get cot information
-        retrieve_pmt_0 = "Question: " + question['question'] + '\n' + " ".join(question['options'])
-        retrieve_pmt_0 += "\nTo answer the question step by step, you can provide your retrieve request to assist you by the following json format:"
-        retrieve_pmt_0 += '''{
+    if USE_ASR:
+        if os.path.exists(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt")):
+            with open(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt"), 'r', encoding='utf-8') as f:
+                asr_docs_total = f.readlines()
+        else:
+            audio_path = os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".wav")
+            asr_docs_total = get_asr_docs(video_path, audio_path)
+            with open(os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".txt"), 'w', encoding='utf-8') as f:
+                for doc in asr_docs_total:
+                    f.write(doc + '\n')
+
+
+    # step 0: get cot information
+    retrieve_pmt_0 = "Question: " + item['question']
+    for i in range(len(item['candidates'])):
+        retrieve_pmt_0 += letter[i] + str(item['candidates'][i]) + " "
+    retrieve_pmt_0 += "\nTo answer the question step by step, list all the physical entities related to the question you want to retrieve, you can provide your retrieve request to assist you by the following json format:"
+    retrieve_pmt_0 += '''{
             "ASR": Optional[str]. The subtitles of the video that may relavent to the question you want to retrieve, in two sentences. If you no need for this information, please return null.
             "DET": Optional[list]. (The output must include only physical entities, not abstract concepts, less than five entities) All the physical entities and their location related to the question you want to retrieve, not abstract concepts. If you no need for this information, please return null.
             "TYPE": Optional[list]. (The output must be specified as null or a list containing only one or more of the following strings: 'location', 'number', 'relation'. No other values are valid for this field) The information you want to obtain about the detected objects. If you need the object location in the video frame, output "location"; if you need the number of specific object, output "number"; if you need the positional relationship between objects, output "relation". 
@@ -310,91 +327,88 @@ for item in tqdm(mme_data[index:], desc="Processing items"):
         }
         Note that you don't need to answer the question in this step, so you don't need any infomation about the video of image. You only need to provide your retrieve request (it's optional), and I will help you retrieve the infomation you want. Please provide the json format.'''
 
-        qs = ""
+    qs = ""
+    if USE_OCR or USE_DET or USE_ASR:
 
-        if USE_ASR or USE_DET or USE_OCR:
-            json_request = llava_inference(retrieve_pmt_0, None)
+        json_request, _ = llava_inference(retrieve_pmt_0, None)
 
-            # step 1: get docs information
-            query = [question['question']]
-            for o in question['options']:
-                query.append(o)
+        # step 1: get docs information
+        query = [item['question']]
+        for o in item['candidates']:
+            query.append(str(o))
 
+        # APE fetch
+        if USE_DET:
+            det_docs = []
+            try:
+                request_det = json.loads(json_request)["DET"]
+                # request_det = filter_keywords(request_det)
+                clip_text = ["A picture of " + txt for txt in request_det]
+                if len(clip_text) == 0:
+                    clip_text = ["A picture of object"]
+            except:
+                request_det = None
+                clip_text = ["A picture of object"]
+
+            clip_inputs = clip_processor(text=clip_text, return_tensors="pt", padding=True, truncation=True).to(clip_model.device)
+            clip_img_feats = clip_model.get_image_features(video_tensor)
+            with torch.no_grad():
+                text_features = clip_model.get_text_features(**clip_inputs)
+                similarities = (clip_img_feats @ text_features.T).squeeze(0).mean(1).cpu()
+                similarities = np.array(similarities, dtype=np.float64)
+                alpha = beta * (len(similarities) / 16)
+                similarities = similarities * alpha / np.sum(similarities)
+
+            del clip_inputs, clip_img_feats, text_features
             torch.cuda.empty_cache()
 
-            # APE fetch
-            if USE_DET:
-                det_docs = []
+            det_top_idx = [idx for idx in range(max_frames_num) if similarities[idx] > clip_threshold]
+                
+            if request_det is not None and len(request_det) > 0:
+                # process directly
+                det_docs = get_det_docs(frames[det_top_idx], request_det, file_name)  
+
+                L, R, N = False, False, False
                 try:
-                    request_det = json.loads(json_request)["DET"]
-                    request_det = filter_keywords(request_det)
-                    clip_text = ["A picture of " + txt for txt in request_det]
-                    if len(clip_text) == 0:
-                        clip_text = ["A picture of object"]
+                    det_retrieve_info = json.loads(json_request)["TYPE"]
                 except:
-                    request_det = None
-                    clip_text = ["A picture of object"]
+                    det_retrieve_info = None
+                if det_retrieve_info is not None:
+                    if "location" in det_retrieve_info:
+                        L = True
+                    if "relation" in det_retrieve_info:
+                        R = True
+                    if "number" in det_retrieve_info:
+                        N = True
+                det_docs = det_preprocess(det_docs, location=L, relation=R, number=N)  # pre-process of APE information
 
-                clip_inputs = clip_processor(text=clip_text, return_tensors="pt", padding=True, truncation=True).to(clip_model.device)
-                clip_img_feats = clip_model.get_image_features(video_tensor)
-                with torch.no_grad():
-                    text_features = clip_model.get_text_features(**clip_inputs)
-                    similarities = (clip_img_feats @ text_features.T).squeeze(0).mean(1).cpu()
-                    similarities = np.array(similarities, dtype=np.float64)
-                    alpha = beta * (len(similarities) / 16)
-                    similarities = similarities * alpha / np.sum(similarities)
 
-                del clip_inputs, clip_img_feats, text_features
-                torch.cuda.empty_cache()
-
-                det_top_idx = [idx for idx in range(max_frames_num) if similarities[idx] > clip_threshold]
-                    
+        # OCR fetch
+        if USE_OCR:
+            try:
+                request_det = json.loads(json_request)["DET"]
+                # request_det = filter_keywords(request_det)
+            except:
+                request_det = None
+            ocr_docs = []
+            if len(ocr_docs_total) > 0:
+                ocr_query = query.copy()
                 if request_det is not None and len(request_det) > 0:
-                    # process directly
-                    det_docs = get_det_docs(frames[det_top_idx], request_det, file_name)  
+                    ocr_query.extend(request_det)
+                ocr_docs, _ = retrieve_documents_with_dynamic(ocr_docs_total, ocr_query, threshold=rag_threshold)
 
-                    L, R, N = False, False, False
-                    try:
-                        det_retrieve_info = json.loads(json_request)["TYPE"]
-                    except:
-                        det_retrieve_info = None
-                    if det_retrieve_info is not None:
-                        if "location" in det_retrieve_info:
-                            L = True
-                        if "relation" in det_retrieve_info:
-                            R = True
-                        if "number" in det_retrieve_info:
-                            N = True
-                    det_docs = det_preprocess(det_docs, location=L, relation=R, number=N)  # pre-process of APE information
-
-
-            # OCR fetch
-            if USE_OCR:
-                try:
-                    request_det = json.loads(json_request)["DET"]
-                    request_det = filter_keywords(request_det)
-                except:
-                    request_det = None
-                ocr_docs = []
-                if len(ocr_docs_total) > 0:
-                    ocr_query = query.copy()
-                    if request_det is not None and len(request_det) > 0:
-                        ocr_query.extend(request_det)
-                    ocr_docs, _ = retrieve_documents_with_dynamic(ocr_docs_total, ocr_query, threshold=rag_threshold)
-
-            # ASR fetch
-            if USE_ASR:
-                asr_docs = []
-                try:
-                    request_asr = json.loads(json_request)["ASR"]
-                except:
-                    request_asr = None
-                if len(asr_docs_total) > 0:
-                    asr_query = query.copy()
-                    if request_asr is not None:
-                        asr_query.append(request_asr)
-                    asr_docs, _ = retrieve_documents_with_dynamic(asr_docs_total, asr_query, threshold=rag_threshold)
-        
+        # ASR fetch
+        if USE_ASR:
+            asr_docs = []
+            try:
+                request_asr = json.loads(json_request)["ASR"]
+            except:
+                request_asr = None
+            if len(asr_docs_total) > 0:
+                asr_query = query.copy()
+                if request_asr is not None:
+                    asr_query.append(request_asr)
+                asr_docs, _ = retrieve_documents_with_dynamic(asr_docs_total, asr_query, threshold=rag_threshold)
         
         if USE_DET and len(det_docs) > 0:
             for i, info in enumerate(det_docs):
@@ -406,21 +420,27 @@ for item in tqdm(mme_data[index:], desc="Processing items"):
             qs += "\nVideo Automatic Speech Recognition information (given in chronological order of the video): " + " ".join(asr_docs)
         if USE_OCR and len(ocr_docs) > 0:
             qs += "\nVideo OCR information (given in chronological order of the video): " + "; ".join(ocr_docs)
-        
-        qs += "Select the best answer to the following multiple-choice question based on the video and the information (if given). Respond with only the letter (A, B, C, or D) of the correct option. Question: " + question['question'] + '\n' + " ".join(question['options']) + '\nThe best answer is:'
-        print("======================================================")
-        print("qs:")
-        print(qs)
-        res = llava_inference(qs, video)
-        question['response'] = res # 原地修改0
-
     
+    qs += "\nSelect the best answer to the following multiple-choice question based on the video and the information (if given). Respond with only the letter (A, B, C, D or E) of the correct option. Question: " + item['question'] + '\n' 
+    for i in range(len(item['candidates'])):
+        qs += letter[i] + str(item['candidates'][i]) + " "
+    qs += "\nThe best answer is:"
+    
+    res, _ = llava_inference(qs, video)
+    
+    # val set
+    start_chr = 'A'
+    content = {
+        "video": item['video_id'],
+        "pred": res[0],
+        "gt": chr(ord(start_chr) + item['correct_choice'])
+    }
 
-    print("len(rep_list)",len(rep_list))
-    rep_list.append(content) # 在原数据上增加了 respondse
-    print("len(rep_list)",len(rep_list))
-os.makedirs(os.path.dirname(json_file), exist_ok=True)
-with open(json_file, "w", encoding='utf-8') as file:
-    json.dump(rep_list, file, ensure_ascii=False, indent=4)
-print(f"save result : {json_file}")
-print("len(rep_list)",len(rep_list))
+    # test set
+    # content[item['video_id']] = res
+
+    rep_list.append(content)
+    index += 1
+
+    with open(json_file, "w", encoding='utf-8') as file:
+        json.dump(rep_list, file, ensure_ascii=False, indent=4)

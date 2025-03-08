@@ -102,9 +102,12 @@ if __name__ == "__main__":
     print("selected_asr",len(selected_asr))
     #TODO: 如何拼接
     rag_question =f"\nVideo have selected {str( len(selected_frame))} frames in total"
-    rag_question+= f"\nVideo Object Detection information (given in chronological order of the video):  {'; '.join( selected_det)}"
-    rag_question += "\nVideo OCR information (given in chronological order of the video): " + "; ".join( selected_ocr)
-    rag_question += "\nVideo Automatic Speech Recognition information (given in chronological order of the video): " + " ".join( selected_asr)
+    if len(selected_det) > 0:
+        rag_question+= f"\nVideo Object Detection information (given in chronological order of the video):  {'; '.join( selected_det)}"
+    if len(selected_ocr) > 0:
+        rag_question += "\nVideo OCR information (given in chronological order of the video): " + "; ".join( selected_ocr)
+    if len(selected_asr) > 0:
+        rag_question += "\nVideo Automatic Speech Recognition information (given in chronological order of the video): " + " ".join( selected_asr)
     rag_question += "\nPlease answer the following questions related to this video: " + question 
     print("rag_question",rag_question)
     #####################################################################

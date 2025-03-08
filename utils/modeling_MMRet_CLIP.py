@@ -211,7 +211,7 @@ class CLIPTextEmbeddings(nn.Module):
     def __init__(self, config: CLIPTextConfig):
         super().__init__()
         embed_dim = config.hidden_size
-
+        self.max_position_embeddings = config.max_position_embeddings
         self.token_embedding = nn.Embedding(config.vocab_size, embed_dim)
         self.position_embedding = nn.Embedding(config.max_position_embeddings, embed_dim)
 
@@ -235,6 +235,8 @@ class CLIPTextEmbeddings(nn.Module):
             inputs_embeds = self.token_embedding(input_ids)
 
         position_embeddings = self.position_embedding(position_ids)
+        # BUG: 截断 最长只能处理 77 token 
+        
         embeddings = inputs_embeds + position_embeddings
 
         return embeddings

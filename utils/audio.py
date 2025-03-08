@@ -55,7 +55,7 @@ def extract_audio(video_path, audio_path):
     if not os.path.exists(audio_path):
         ffmpeg.input(video_path).output(audio_path, acodec='pcm_s16le', ac=1, ar='16k').run()
 
-def get_asr_docs(video_path, whisper_model, whisper_processor):
+def get_asr_docs(video_path, whisper_model, whisper_processor,chunk_length_s=30):
     audio_path = os.path.join("restore/audio", os.path.basename(video_path).split(".")[0] + ".wav")
     full_transcription = []
     try:
@@ -63,8 +63,8 @@ def get_asr_docs(video_path, whisper_model, whisper_processor):
         extract_audio(video_path, audio_path)
     except:
         return full_transcription
-    # 得到audio的切片
-    audio_chunks = chunk_audio(audio_path, chunk_length_s=30)
+    # 得到audio的切片,根据 chunk_length_s和模型能够处理的最大音频长度
+    audio_chunks = chunk_audio(audio_path, chunk_length_s)
     
     for chunk in audio_chunks:
         transcription = transcribe_chunk(whisper_model, whisper_processor, chunk)
