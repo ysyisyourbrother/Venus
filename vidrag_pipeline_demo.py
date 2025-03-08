@@ -17,6 +17,7 @@ import re
 import ast
 import socket
 import pickle
+import sys
 from tools.filter_keywords import filter_keywords
 from tools.scene_graph import generate_scene_graph_description
 import ffmpeg, torchaudio
@@ -161,7 +162,8 @@ def create_det_doc(raw_video,clip_processor):
     video_tensor = torch.stack(video_tensor, dim=0)
     end_time = time.perf_counter()
     print("DET time:", (end_time - start_time) * 1000, "ms")
-    print("video_tensor",video_tensor[0].shape)
+    print("video_tensor",video_tensor.shape)
+    print("video_tensor[0]",video_tensor[0].shape)
     print("==================================")
     return video_tensor
 
@@ -189,7 +191,7 @@ def create_asr_doc(video_path):
     return asr_docs_total
 
 # The inference function of your VLM
-def llava_inference(qs, video):
+def llava_inference(model,tokenizer, qs, video):
     if video is not None:
         question = DEFAULT_IMAGE_TOKEN + qs
     else:
@@ -215,7 +217,7 @@ def llava_inference(qs, video):
 
 
 
-def query_decouple(question):
+def query_decouple(model,question):
     print("Query Decouple")
     retrieve_pmt_0 = "Question: " + question
     # you can change this decouple prompt to fit your requirements
@@ -252,16 +254,12 @@ def query_decouple(question):
     Note that you don't need to answer the question in this step, so you don't need any infomation about the video of image. You only need to provide your retrieve request (it's optional), and I will help you retrieve the infomation you want. Please provide the json format.'''
     print("===========================================")
     
-    # start_time  = time.perf_counter()
-    # json_request  = llava_inference(retrieve_pmt_0, None)
-    # end_time = time.perf_counter()
-    # print("Query Decouple time:", (end_time - start_time) * 1000, "ms")
-    # print("json_request:",json_request)
-    json_request= """{
-    "ASR": "null",
-    "DET": ["The lake"],
-    "TYPE": ["location"]
-    }""" #TODO:OOM
+    start_time  = time.perf_counter()
+    json_request  = llava_inference(model, tokenizer,retrieve_pmt_0, None)
+    end_time = time.perf_counter()
+    print("Query Decouple time:", (end_time - start_time) * 1000, "ms")
+    print("json_request:",json_request)
+   
     return json_request
 def retrieve_det(json_request,clip_processor,clip_model,frames,video_tensor,clip_threshold):
     det_docs = []
@@ -274,9 +272,12 @@ def retrieve_det(json_request,clip_processor,clip_model,frames,video_tensor,clip
     except:
         request_det = None
         clip_text = ["A picture of object"]
+    
+    clip_text = ["A picture of bear"] #TODO:
     print("clip_text",clip_text)
     clip_inputs = clip_processor(text=clip_text, return_tensors="pt", padding=True, truncation=True).to(clip_model.device)
-    clip_img_feats = clip_model.get_image_features(video_tensor)
+    with torch.no_grad():
+        clip_img_feats = clip_model.get_image_features(video_tensor)
     # we compute the CLIP similarity [29] between the object retrieval request Rdet and the sampled video frames F 
     with torch.no_grad():
         text_features = clip_model.get_text_features(**clip_inputs)
@@ -289,10 +290,12 @@ def retrieve_det(json_request,clip_processor,clip_model,frames,video_tensor,clip
     torch.cuda.empty_cache()
     # select relevant keyframes Fkey based on a threshold t:
     det_top_idx = [idx for idx in range(max_frames_num) if similarities[idx] > clip_threshold]
+    print("selecte frame",len(det_top_idx) )
     # utilize APE, an efficient open-vocabulary object detection model that accepts object descriptions as prompts to detect relevant objects within frames based on specific retrieval queries
     if request_det is not None and len(request_det) > 0:
         det_docs = get_det_docs(frames[det_top_idx], request_det)  
-
+        print("============================================")
+        print("det_docs:\n", det_docs)
         L, R, N = False, False, False
         try:
             det_retrieve_info = json.loads(json_request)["TYPE"]
@@ -307,6 +310,7 @@ def retrieve_det(json_request,clip_processor,clip_model,frames,video_tensor,clip
                 N = True
         # Object Location + Object Counting + Relative Positional Relationships
         det_docs = det_preprocess(det_docs, location=L, relation=R, number=N)  # pre-process of APE information
+        
     return det_docs,det_top_idx
 
 
@@ -357,30 +361,44 @@ def retrieve_asr(json_request,query,asr_docs_total,rag_threshold):
 
 if __name__ == "__main__":
     device = "cuda"
-    max_frames_num = 32
+    max_frames_num =   16
+    # Choose the auxiliary texts you want
+    USE_OCR = True
+    USE_ASR = False 
+    USE_DET = False
+    # super-parameters setting
+    rag_threshold = 0.3
+    clip_threshold = 0.2
+    beta = 3.0 
+    print(f"---------------OCR{rag_threshold}: {USE_OCR}-----------------")
+    print(f"---------------ASR{rag_threshold}: {USE_ASR}-----------------")
+    print(f"---------------DET{beta}-{clip_threshold}: {USE_DET}-----------------")
+    print(f"---------------Frames: {max_frames_num}-----------------")
     #####################################################################
     # load clip
-    print("load clip.................................")
-    mem_before = torch.cuda.max_memory_allocated( )
-    clip_model = CLIPModel.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336", 
-                                        torch_dtype=torch.float16, ) 
-    clip_processor = CLIPProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336")
-    clip_model.to(device)
-    mem_after = torch.cuda.max_memory_allocated( )
-    print("CLIP memory usage: {:.2f} GB".format((mem_after - mem_before) / 1024 / 1024/ 1024))
+    if USE_DET:
+        print("load clip.................................")
+        mem_before = torch.cuda.max_memory_allocated( )
+        clip_model = CLIPModel.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336", 
+                                            torch_dtype=torch.float16, ) 
+        clip_processor = CLIPProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/clip-vit-large-patch14-336")
+        clip_model.to(device)
+        mem_after = torch.cuda.max_memory_allocated( )
+        print("CLIP memory usage: {:.2f} GB".format((mem_after - mem_before) / 1024 / 1024/ 1024))
     #####################################################################
     # load whisper (ASR)
-    print("load whisper.................................")
-    mem_before = torch.cuda.max_memory_allocated( )
-    whisper_model = WhisperForConditionalGeneration.from_pretrained(
-        "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large",
-        torch_dtype=torch.float16,
-        # device_map="auto"
-    )
-    whisper_model.to(device)
-    whisper_processor = WhisperProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/whisper-large")
-    mem_after = torch.cuda.max_memory_allocated( )
-    print("Whisper memory usage: {:.2f} GB".format((mem_after - mem_before) / 1024 / 1024/ 1024))
+    if USE_ASR:
+        print("load whisper.................................")
+        mem_before = torch.cuda.max_memory_allocated( )
+        whisper_model = WhisperForConditionalGeneration.from_pretrained(
+            "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large",
+            torch_dtype=torch.float16,
+            # device_map="auto"
+        )
+        whisper_model.to(device)
+        whisper_processor = WhisperProcessor.from_pretrained("/root/nfs/codespace/llm-models/MLLM/openai/whisper-large")
+        mem_after = torch.cuda.max_memory_allocated( )
+        print("Whisper memory usage: {:.2f} GB".format((mem_after - mem_before) / 1024 / 1024/ 1024))
     #####################################################################
     # load your VLM
     print("load LLaVA-Video-7B-Qwen2.................................")
@@ -397,27 +415,11 @@ if __name__ == "__main__":
         overwrite_config=overwrite_config)  # Add any other thing you want to pass in llava_model_args
     mem_after = torch.cuda.max_memory_allocated( )
     print("LLaVA-Video-7B-Qwen2 memory usage: {:.2f} GB".format((mem_after - mem_before) / 1024 / 1024/ 1024))
-
     model.eval()
-    del model #TODO: OOM 
+    
     conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
-
-
-    # super-parameters setting
-    rag_threshold = 0.3
-    clip_threshold = 0.3
-    beta = 3.0 
-    # Choose the auxiliary texts you want
-    USE_OCR = True
-    USE_ASR = True 
-    USE_DET = False
-    print(f"---------------OCR{rag_threshold}: {USE_OCR}-----------------")
-    print(f"---------------ASR{rag_threshold}: {USE_ASR}-----------------")
-    print(f"---------------DET{beta}-{clip_threshold}: {USE_DET}-----------------")
-    print(f"---------------Frames: {max_frames_num}-----------------")
-
-    video_path = "/root/nfs/codespace/Venus/demo/lake.mp4"  # your video path
-    question = "Describe the lake."  # your question
+    video_path = "/root/nfs/codespace/Venus/demo/animal.mp4"  # your video path
+    question = "Describe the animal in the video."  # your question
     # frame filter
     frames, frame_time, video_time = process_video(video_path, max_frames_num, 1, force_sample=True) #  
     raw_video = [f for f in frames]
@@ -438,7 +440,12 @@ if __name__ == "__main__":
 
 
     # step 0: get cot information
-    json_request = query_decouple(question)
+    json_request = query_decouple( model, question)
+    # json_request= """{
+    # "ASR": "null",
+    # "DET": ["The animal"],
+    # "TYPE": ["location"]
+    # }""" #TODO:OOM
     print("json_request:",json_request)
     # step 1: get docs information
     query = [question]
@@ -467,7 +474,7 @@ if __name__ == "__main__":
     print("=============================================")
     print("qs:", qs)
 
-    #TODO: OOM 因为内存不够
-    # res = llava_inference(qs, video)
-    # print("=============================================")
-    # print("res:", res)
+ 
+    res = llava_inference(model, tokenizer,qs, video)
+    print("=============================================")
+    print("res:", res) 

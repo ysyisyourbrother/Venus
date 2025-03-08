@@ -2,32 +2,29 @@ from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
 import faiss
-tokenizer = AutoTokenizer.from_pretrained('/root/nfs/download/facebook/contriever')
-model = AutoModel.from_pretrained('/root/nfs/download/facebook/contriever')
+import sys
+sys.path.append('..')
+from utils.rag import DataBase
+docs = ["I like Xiaoding's articles", "I hate Xiaoding's creative content", "I really like the articles written by Xiaoding"]
+query = "I love reading Xiaoding's articles"
+db = DataBase()
+db.index_data_add(docs)
+db.print_index_ntotal()
+top_documents, idx = db.retrieve_documents_with_dynamic(query)
+print("top_documents",top_documents)
+print("idx",idx)
 
-def text_to_vector(text, max_length=512):
-    inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=max_length)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy()
- 
-datas = ["我喜欢小丁的文章", "我讨厌小丁的创作内容", "我非常喜欢小丁写的文章"]
-datas_embedding = text_to_vector(datas)
-def create_index(datas_embedding):
-    # 构建索引，这里我们选用暴力检索的方法FlatL2为例，L2代表构建的index采用的相似度度量方法为L2范数，即欧氏距离
-    index = faiss.IndexFlatL2(datas_embedding.shape[1])  # 这里必须传入一个向量的维度，创建一个空的索引
-    index.add(datas_embedding)   # 把向量数据加入索引
-    return index
+# add documents
+documents = ["NO! I like tennis!","Let me know if you need further modifications or explanations!"]
+db.index_data_add(documents)
+db.print_index_ntotal()
+top_documents, idx = db.retrieve_documents_with_dynamic(query)
+print("top_documents",top_documents)
+print("idx",idx)
 
-def data_recall(faiss_index, query, top_k):
-    query_embedding =  text_to_vector(query)
-    Distance, Index = faiss_index.search(query_embedding, top_k)
-    return Index
 
-datas = ["我喜欢小丁的文章", "我讨厌小丁的创作内容", "我非常喜欢小丁写的文章"]
-datas_embedding = text_to_vector(datas)
-faiss_index = create_index(datas_embedding)
-sim_data_Index = data_recall(faiss_index, "我爱看小丁的文章", 2)
-print("相似的top2数据是：")
-for index in sim_data_Index[0]:
-    print(datas[int(index)] + "\n")
+print("top k result")
+db.print_index_ntotal()
+top_documents, idx = db.retrieve_documents_top_k(query , top_k=2)
+print("top_documents",top_documents)
+print("idx",idx)

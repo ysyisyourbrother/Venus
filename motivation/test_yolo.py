@@ -2,22 +2,17 @@ from ultralytics import YOLO
 import time
 import os
 import sys
+from collections import Counter
+
 sys.path.append('..')
 from utils.vedio import process_video
-
-# video_path = "../demo/animal.mp4"  # your video path
-max_frames_num =   32
-# frames, frame_time, video_time = process_video(video_path, max_frames_num, 1, force_sample=True) #  
-# raw_video = [f for f in frames]
-# print( "len(raw_video)",len(raw_video))
+max_frames_num =  1
 images = ["cat.jpg"]
-
 raw_video =  images*max_frames_num
 model = YOLO("yolo11l.pt")
 model.info()
-
 start_time = time.perf_counter()
-iter = 20
+iter = 1
 for i in range(iter):
     results = model( raw_video,stream=True,batch =max_frames_num)  # predict on an image
 end_time = time.perf_counter()
@@ -43,5 +38,17 @@ for result in results:
             for name, conf, coords in zip(names, confs, xyxyn)
         ]    
     print(descriptions)
+    filtered_names = [name for name, conf in zip(names, confs) if conf >= 0.5]
+    object_counts = Counter(filtered_names)
+    print(object_counts)
 print(total_name_list),
 print(total_con_list)
+
+
+video_path = "../demo/animal.mp4"  # your video path
+max_frames_num =   32
+frames, frame_time, video_time = process_video(video_path, max_frames_num, 1, force_sample=True) #  
+raw_video = [f for f in frames]
+print( "len(raw_video)",len(raw_video))
+print(raw_video[0].shape)
+results = model( raw_video,stream=True,batch =max_frames_num) 

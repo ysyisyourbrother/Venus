@@ -194,13 +194,15 @@ def run_inference(args):
         qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + "\n" + qs
     else:
         qs = DEFAULT_IMAGE_TOKEN + "\n" + qs
+    print("=====================================")
     print(qs)
     conv = conv_templates[ "qwen_1_5"].copy()
     conv.append_message(conv.roles[0], qs)
     conv.append_message(conv.roles[1], None)
     prompt = conv.get_prompt()
 
-    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, 
+                                      return_tensors="pt").unsqueeze(0).cuda()
     if tokenizer.pad_token_id is None:
         if "qwen" in tokenizer.name_or_path.lower():
             print("Setting pad token to bos token for qwen model.")

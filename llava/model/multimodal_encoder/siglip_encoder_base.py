@@ -72,14 +72,14 @@ class SigLipVisionConfig(PretrainedConfig):
 
     def __init__(
         self,
-        hidden_size=1152,
+        hidden_size=768,
         image_mean=(0.5, 0.5, 0.5),
-        intermediate_size=4304,
-        num_hidden_layers=27,
-        num_attention_heads=16,
+        intermediate_size=3072,
+        num_hidden_layers=12,
+        num_attention_heads=12,
         num_channels=3,
         image_size=384,
-        patch_size=14,
+        patch_size=16,
         hidden_act="gelu_pytorch_tanh",
         layer_norm_eps=1e-6,
         attention_dropout=0.0,
@@ -535,7 +535,7 @@ class SigLipVisionModel(SigLipPreTrainedModel):
         )
 
 
-class SigLipVisionTower(nn.Module):
+class SigLipVisionTowerBase(nn.Module):
     def __init__(self, vision_tower, vision_tower_cfg, delay_load=False):
         super().__init__()
 
@@ -582,14 +582,12 @@ class SigLipVisionTower(nn.Module):
             for image in images:
                 image_forward_out = self.vision_tower(image.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True)
                 image_feature = image_forward_out.hidden_states[-1].to(image.dtype)
-                # print("forward",image_feature.shape)
-                assert image_features.shape[-2] == 729
+                # assert image_features.shape[-2] == 729
                 image_features.append(image_feature)
         else:
             image_forward_outs = self.vision_tower(images.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
             image_features = image_forward_outs.hidden_states[-1].to(images.dtype)
-            # print("forward",image_features.shape)
-            assert image_features.shape[-2] == 729
+            # assert image_features.shape[-2] == 729 #TODO:why 为什么不经过完整的
 
         return image_features
 

@@ -1160,7 +1160,7 @@ class Qwen2ForCausalLM(Qwen2PreTrainedModel, GenerationMixin):
 
             print("prefilling length:",  inputs_embeds.shape[1])
             start_time  = time.perf_counter()
-            print("begin prefil")
+            print("begin prefilling")
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
