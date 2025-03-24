@@ -5,7 +5,6 @@ import faiss
 from .vision_encoder import process_images
 from ultralytics import YOLO
 import easyocr
-#TODO: 替换 LLaVA-Video-7B-Qwen2 embedding 对齐 
 tokenizer = AutoTokenizer.from_pretrained('/root/nfs/download/facebook/contriever')
 model = AutoModel.from_pretrained('/root/nfs/download/facebook/contriever')
 def text_to_vector(text, max_length=512):
@@ -45,9 +44,15 @@ def get_det_text(yolo_model,frames):
     
     from collections import Counter
     threshold = 0.5 #TODO:
-    results = yolo_model(frames,stream=True,batch = len(frames))
+    results_list = [] 
+    batch = 32 #TODO:
+    with torch.no_grad():
+        for i in range(0, len(frames), batch):
+            batch_frames = frames[i:i+batch]
+            results = yolo_model(batch_frames,stream=True,batch = len(batch_frames))
+            results_list.extend(results)
     det_docs = []
-    for result in results:
+    for result in results_list:
         names = [result.names[cls.item()] for cls in result.boxes.cls.int()]  # class name of each box
         confs = result.boxes.conf  # confidence score of each box
         confs = [c.item() for c in confs]
@@ -107,9 +112,14 @@ class VideoDataBase:
         self.ocr_model = ocr_model
     def get_query_vector(self,query):
         with torch.no_grad():
+            # print("query",query)
             query = self.embedding_model.encode(text = query)
+            #TODO: 是否对齐
+            # print("query shape",query.shape)
             return query.cpu().numpy() 
     def add_frames(self,frames):
+        if len(frames) == 0:
+            return
         assert self.index is not None
         assert isinstance(frames, list)
         # 同时处理多个帧， 因为yolo 适合批处理
@@ -158,12 +168,17 @@ class TextDataBase:
         self.index = faiss.IndexFlatIP(dimension) #    这里必须传入一个向量的维度，创建一个空的索引
         self.embedding_model = embedding_model
     def encode_text(self, text):
+        # print(text)
+        # print(len(text))
         with torch.no_grad():
             text = self.embedding_model.encode(text = text)
             return text.cpu().numpy()
     def add_documents(self,documents):
+        if len(documents) == 0:
+            return
         assert self.index is not None
         assert isinstance(documents, list)
+ 
         document_vectors =  [ self.encode_text(doc) for doc in documents]
         document_vectors = np.vstack(document_vectors)
         print("document_vectors",document_vectors.shape)
@@ -171,6 +186,7 @@ class TextDataBase:
         self.documents.extend(documents)
     def retrieve_documents_top_k(self, query,  top_k=5):        
         query_vector =self.encode_text(query)
+        print("query_vector",query_vector.shape)
         D, I = self.index.search( query_vector, top_k)  # I.shape = (1, top_k)
         idx = I[0].tolist() 
         top_documents = [ self.documents[i] for i in idx if i != -1]

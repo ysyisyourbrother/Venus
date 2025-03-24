@@ -115,7 +115,7 @@ def run_inference(args):
         overwrite_config["mm_spatial_pool_mode"] = args.mm_spatial_pool_mode
         overwrite_config["mm_spatial_pool_stride"] = args.mm_spatial_pool_stride
         overwrite_config["mm_newline_position"] = args.mm_newline_position
-
+        # overwrite_config["_attn_implementation"] = "flash_attention_2"
         cfg_pretrained = AutoConfig.from_pretrained(args.model_path)
 
         if "qwen" not in args.model_path.lower():

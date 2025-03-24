@@ -163,6 +163,11 @@ cython_debug/
 #.idea/
 demo/qinhaiyao.mp4
 1.py
+1.txt
 restore/*
 eval/results/*
 *.wav
+get_device_map.py
+eval/generate_videomme.py
+eval/eval_llava_next_video_videomme.py
+vidrag/

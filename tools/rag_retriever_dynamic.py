@@ -14,7 +14,6 @@ def text_to_vector(text, max_length=512):
 
 def retrieve_documents_with_dynamic(documents, queries, threshold=0.4):
     # query转化为向量
-    print("query",queries)
     if isinstance(queries, list):
         query_vectors = np.array([text_to_vector(query) for query in queries])
         average_query_vector = np.mean(query_vectors, axis=0)
@@ -24,6 +23,7 @@ def retrieve_documents_with_dynamic(documents, queries, threshold=0.4):
         query_vector = text_to_vector(queries)
         query_vector = query_vector / np.linalg.norm(query_vector)
         query_vector = query_vector.reshape(1, -1)
+    print("query_vector",query_vector.shape)
     # 每个文档向量进行归一化处理
     document_vectors = np.array([text_to_vector(doc) for doc in documents])
     document_vectors = document_vectors / np.linalg.norm(document_vectors, axis=1, keepdims=True)

@@ -22,21 +22,28 @@ print(f"avg time for {max_frames_num} frames: {(end_time - start_time)/iter * 10
 
 total_name_list = []
 total_con_list  = []
+descriptions = []
 # Access the results
 for result in results:
+    keypoints = result.keypoints  # Keypoints object for pose outputs
     xywh = result.boxes.xywh  # center-x, center-y, width, height
     xywhn = result.boxes.xywhn  # normalized
     xyxy = result.boxes.xyxy  # top-left-x, top-left-y, bottom-right-x, bottom-right-y
     xyxyn = result.boxes.xyxyn  # normalized
     names = [result.names[cls.item()] for cls in result.boxes.cls.int()]  # class name of each box
     confs = result.boxes.conf  # confidence score of each box
+    
     confs = [c.item() for c in confs]
     total_name_list += names
     total_con_list += confs
+
     descriptions = [
             f"{name} located at (x1={coords[0]:.3f}, y1={coords[1]:.3f}, x2={coords[2]:.3f}, y2={coords[3]:.3f})"
             for name, conf, coords in zip(names, confs, xyxyn)
         ]    
+    for name, (x, y, w, h), conf in zip(names, xywh.tolist(), confs):
+        descriptions.append(f"Detected a {name} at center ({x:.1f}, {y:.1f}) with width {w:.1f} and height {h:.1f}.")
+
     print(descriptions)
     filtered_names = [name for name, conf in zip(names, confs) if conf >= 0.5]
     object_counts = Counter(filtered_names)

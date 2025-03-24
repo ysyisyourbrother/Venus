@@ -148,6 +148,7 @@ def eval_your_results(
 
         if not skip_missing:
             # Check if the number of files in your results and ground truth are the same
+            
             assert len(your_results_video_type) == 300, f"Number of files in {video_type} is not 300. Check if there are missing files."
 
         for item in your_results_video_type:

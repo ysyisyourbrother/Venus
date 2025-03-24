@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple, Union
-
+import os
 import torch
 import torch.utils.checkpoint
 from torch import nn
@@ -40,8 +40,8 @@ from transformers.utils import (
 from transformers.models.clip.configuration_clip import CLIPConfig, CLIPTextConfig, CLIPVisionConfig
 from transformers import CLIPProcessor
 
-if is_flash_attn_2_available():
-    from transformers.modeling_flash_attention_utils import _flash_attention_forward
+# if is_flash_attn_2_available():
+#     from transformers.modeling_flash_attention_utils import _flash_attention_forward
 
 
 logger = logging.get_logger(__name__)
@@ -1274,8 +1274,8 @@ class CLIPModel(CLIPPreTrainedModel):
     
     def encode_multimodal(self, images, text):
         text_embeddings = self.get_text_features(**text)
+        print("text_embeddings",text_embeddings.shape)
         image_embeddings = self.get_image_features(images)
-        
         embeddings = text_embeddings + image_embeddings    
         embeddings = torch.nn.functional.normalize(embeddings, dim=-1)
 
@@ -1284,13 +1284,13 @@ class CLIPModel(CLIPPreTrainedModel):
     def data_process(self, images=None, text=None):
         if images is None and text is not None:
             text = self.processor(text=text, return_tensors="pt", padding=True).to(self.device)
-            
             return images, text, "text"
         elif images is not None and text is None:
             if isinstance(images, str):
                 images = Image.open(images).convert("RGB")
             elif isinstance(images, list):
-                images = [Image.open(image).convert("RGB") for image in images]
+                if isinstance(images[0], str) and os.path.isfile(images[0]):
+                    images = [Image.open(image).convert("RGB") for image in images]
             images = self.processor(images=images, return_tensors="pt").to(self.device)
             images = images["pixel_values"]
             return images, text, "images"
@@ -1299,8 +1299,10 @@ class CLIPModel(CLIPPreTrainedModel):
             if isinstance(images, str):
                 images = Image.open(images).convert("RGB")
             elif isinstance(images, list):
+         
                 assert len(images) == len(text), "images and text must be lists of the same length when use list"
-                images = [Image.open(image).convert("RGB") for image in images]
+                if isinstance(images[0], str) and os.path.isfile(images[0]):
+                    images = [Image.open(image).convert("RGB") for image in images]
             images = self.processor(images=images, return_tensors="pt").to(self.device)
             images = images["pixel_values"]
             text = self.processor(text=text, return_tensors="pt", padding=True).to(self.device)
@@ -1310,6 +1312,7 @@ class CLIPModel(CLIPPreTrainedModel):
 
     def encode(self, images=None, text=None):
         images, text, data_type = self.data_process(images, text)
+       
         if data_type == "images":
             return self.encode_image(images)
         elif data_type == "text":
