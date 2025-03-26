@@ -1274,7 +1274,7 @@ class CLIPModel(CLIPPreTrainedModel):
     
     def encode_multimodal(self, images, text):
         text_embeddings = self.get_text_features(**text)
-        print("text_embeddings",text_embeddings.shape)
+        # print("text_embeddings",text_embeddings.shape)
         image_embeddings = self.get_image_features(images)
         embeddings = text_embeddings + image_embeddings    
         embeddings = torch.nn.functional.normalize(embeddings, dim=-1)

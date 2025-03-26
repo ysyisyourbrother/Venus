@@ -5,14 +5,15 @@ import faiss
 from .vision_encoder import process_images
 from ultralytics import YOLO
 import easyocr
-tokenizer = AutoTokenizer.from_pretrained('/root/nfs/download/facebook/contriever')
-model = AutoModel.from_pretrained('/root/nfs/download/facebook/contriever')
+
 def text_to_vector(text, max_length=512):
+    tokenizer = AutoTokenizer.from_pretrained('/root/nfs/download/facebook/contriever')
+    model = AutoModel.from_pretrained('/root/nfs/download/facebook/contriever')
     inputs = tokenizer(text, return_tensors='pt', truncation=True, padding=True, max_length=max_length)
     with torch.no_grad():
         outputs = model(**inputs)
-    # print(outputs.last_hidden_state.shape) # torch.Size([1, 10, 768])
-    # print(outputs.last_hidden_state.mean(dim=1).shape) # torch.Size([1, 768])
+    print(outputs.last_hidden_state.shape) # torch.Size([1, 10, 768])
+    print(outputs.last_hidden_state.mean(dim=1).shape) # torch.Size([1, 768])
     return outputs.last_hidden_state.mean(dim=1).squeeze().cpu().numpy() 
 def load_embedding_model(model_path,device = "cuda"):
     if 'BGE' in model_path:
@@ -112,11 +113,29 @@ class VideoDataBase:
         self.ocr_model = ocr_model
     def get_query_vector(self,query):
         with torch.no_grad():
-            # print("query",query)
-            query = self.embedding_model.encode(text = query)
+            if not isinstance(query, list):
+                raise NotImplementedError
+            text_query  = " ".join(query)
+            inputs  = self.embedding_model.processor(text=text_query, return_tensors="pt", padding=True).to(self.embedding_model.device)
+            input_ids = inputs ["input_ids"]
+            print("query shape",input_ids.shape)
+            if input_ids.shape[1] <= 77:
+                query_vector = self.embedding_model.encode(text = text_query).cpu().numpy() 
+                query_vector = query_vector / np.linalg.norm(query_vector)
+                query_vector = query_vector.reshape(1, -1)
+                print("query is text")
+                return query_vector
+            else:
+                # 超过bge处理范围77 token
+                query_vectors =   np.array([self.embedding_model.encode(text = q).cpu().numpy() for q in query])
+                average_query_vector = np.mean(query_vectors, axis=0)
+                query_vector = average_query_vector / np.linalg.norm(average_query_vector)
+                query_vector = query_vector.reshape(1, -1)
+                print("query is list")
+                return query_vector
             #TODO: 是否对齐
             # print("query shape",query.shape)
-            return query.cpu().numpy() 
+            
     def add_frames(self,frames):
         if len(frames) == 0:
             return
@@ -140,7 +159,11 @@ class VideoDataBase:
     }
     def retrieve_documents_top_k(self, query,  top_k=5):        
         query_vector = self.get_query_vector(query)
+        print("query_vector",query_vector.shape )
         D, I = self.index.search( query_vector, top_k)  # I.shape = (1, top_k)
+        print("D shape",D.shape)
+        print(D)
+        print(I)
         idx = I[0].tolist() 
         top_documents = [self.get_raw_data(i) for i in idx if i != -1]
         return top_documents,idx
@@ -149,8 +172,12 @@ class VideoDataBase:
         # query转化为向量
         query_vector = self.get_query_vector(query)
         lims, D, I = self.index.range_search(query_vector, threshold)
+        
         start = lims[0]
         end = lims[1]
+        print(len(D))
+        print(D)
+        print(I)
         I = I[start:end]
         if len(I) == 0:
             top_documents = []
@@ -167,6 +194,28 @@ class TextDataBase:
         self.documents = []
         self.index = faiss.IndexFlatIP(dimension) #    这里必须传入一个向量的维度，创建一个空的索引
         self.embedding_model = embedding_model
+    def get_query_vector(self, query):
+        with torch.no_grad():
+            if not isinstance(query, list):
+                raise NotImplementedError
+            text_query  = " ".join(query)
+            inputs  = self.embedding_model.processor(text=text_query, return_tensors="pt", padding=True).to(self.embedding_model.device)
+            input_ids = inputs ["input_ids"]
+            print("query shape",input_ids.shape)
+            if input_ids.shape[1] <= 77:
+                query_vector = self.embedding_model.encode(text = text_query).cpu().numpy() 
+                query_vector = query_vector / np.linalg.norm(query_vector)
+                query_vector = query_vector.reshape(1, -1)
+                print("query is text")
+                return query_vector
+            else:
+                # 超过bge处理范围77 token
+                query_vectors =   np.array([self.embedding_model.encode(text = q).cpu().numpy() for q in query])
+                average_query_vector = np.mean(query_vectors, axis=0)
+                query_vector = average_query_vector / np.linalg.norm(average_query_vector)
+                query_vector = query_vector.reshape(1, -1)
+                print("query is list")
+                return query_vector
     def encode_text(self, text):
         # print(text)
         # print(len(text))
@@ -178,14 +227,13 @@ class TextDataBase:
             return
         assert self.index is not None
         assert isinstance(documents, list)
- 
         document_vectors =  [ self.encode_text(doc) for doc in documents]
         document_vectors = np.vstack(document_vectors)
         print("document_vectors",document_vectors.shape)
         self.index.add(document_vectors)
         self.documents.extend(documents)
     def retrieve_documents_top_k(self, query,  top_k=5):        
-        query_vector =self.encode_text(query)
+        query_vector =self.get_query_vector(query)
         print("query_vector",query_vector.shape)
         D, I = self.index.search( query_vector, top_k)  # I.shape = (1, top_k)
         idx = I[0].tolist() 
@@ -193,7 +241,7 @@ class TextDataBase:
         return top_documents,idx
     def retrieve_documents_with_dynamic(self, query, threshold=0.4):
         # query转化为向量
-        query_vector = self.encode_text(query)
+        query_vector = self.get_query_vector(query)
         lims, D, I = self.index.range_search(query_vector, threshold)
         start = lims[0]
         end = lims[1]

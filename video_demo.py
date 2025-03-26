@@ -62,6 +62,8 @@ def parse_args():
     parser.add_argument("--mm_newline_position", type=str, default="no_token")
     parser.add_argument("--force_sample", type=lambda x: (str(x).lower() == 'true'), default=False)
     parser.add_argument("--add_time_instruction", type=str, default=False)
+    parser.add_argument("--attn_implementation", type=str, default="flash_attention_2", 
+                        choices=["eager", "sdpa", "flash_attention_2"])
     return parser.parse_args()
 
 def load_video(video_path,args):
@@ -115,7 +117,7 @@ def run_inference(args):
         overwrite_config["mm_spatial_pool_mode"] = args.mm_spatial_pool_mode
         overwrite_config["mm_spatial_pool_stride"] = args.mm_spatial_pool_stride
         overwrite_config["mm_newline_position"] = args.mm_newline_position
-        # overwrite_config["_attn_implementation"] = "flash_attention_2"
+        overwrite_config["_attn_implementation"] = args.attn_implementation#NOTE:
         cfg_pretrained = AutoConfig.from_pretrained(args.model_path)
 
         if "qwen" not in args.model_path.lower():
@@ -138,6 +140,7 @@ def run_inference(args):
                                                                                 torch_dtype="bfloat16", 
                                                                                 load_8bit=args.load_8bit, 
                                                                                 load_4bit=args.load_4bit, 
+                                                                                attn_implementation=args.attn_implementation,
                                                                                 overwrite_config=overwrite_config,
                                                                             )
     else:
@@ -147,6 +150,7 @@ def run_inference(args):
                                                                                torch_dtype="bfloat16",
                                                                                 load_8bit=args.load_8bit, 
                                                                                 load_4bit=args.load_4bit, 
+                                                                                 attn_implementation=args.attn_implementation,
                                                                                )
     print(model)
     print(model.dtype)

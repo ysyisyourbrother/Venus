@@ -38,9 +38,20 @@ def parse_args():
         type=int,
         help="Specify the maximum number of video frames to process."
     )
-
+    parser.add_argument(
+        "--vlm_path",
+        help="Path to the pre-trained weights of the LLaVA-Video-7B-Qwen2 vision-language model.",
+        default="/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-Video-7B-Qwen2"
+    )
+    parser.add_argument(
+        "--mme_data_path",
+        help="Path to the MME dataset",
+        default= "/root/nfs/download/dataset/lmms-lab/Video-MME"
+    )
+    parser.add_argument("--attn_implementation", type=str, default="flash_attention_2", 
+                        choices=["eager", "sdpa", "flash_attention_2"])
     return parser.parse_args()
-
+    
 def llava_inference(qs, video):
     if video is not None:
         time_instruciton = f"The video lasts for {video_time:.2f} seconds, and {len(video[0])} frames are uniformly sampled from it. These frames are located at {frame_time}.Please answer the following questions related to this video."
@@ -81,26 +92,26 @@ max_frames_num = args.max_frames_num
 overwrite_config = {}
 overwrite_config["mm_spatial_pool_mode"] =  "average"
 tokenizer, model, image_processor, max_length = load_pretrained_model(
-    "/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-Video-7B-Qwen2", 
+    args.vlm_path , 
     None, 
     "llava_qwen", 
     torch_dtype="bfloat16", 
     load_in_8bit=False,
     load_in_4bit=False,
     overwrite_config=overwrite_config, 
+    attn_implementation=args.attn_implementation,
     device_map="auto")  # Add any other thing you want to pass in llava_model_args
 model.eval()
 conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
 print(model)
-data_path = "/root/nfs/download/dataset/lmms-lab/Video-MME"
+data_path = args.mme_data_path # mp4 data path
 print("MME data path: ", data_path)
-# TODO: change to videomme_json_file.json (complete file)
 with open(f"eval/VideoMME/{args.video_duration_type}.json", 'r', encoding='utf-8') as file:
     mme_data = json.load(file)
 # save result 
 os.makedirs("eval/results", exist_ok=True)
 json_file = f"eval/results/eval_llava_video_videomme_{args.video_duration_type}_{max_frames_num}.json"
-
+print("save to ", json_file)
 rep_list = []  # 这个的作用是读取之前测试的结果，然后继续测试,如果之前的结果有的话，那么就直接跳过[:index]的测试数据
 if os.path.exists(json_file):
     with open(json_file, 'r', encoding='utf-8') as file:
@@ -108,7 +119,7 @@ if os.path.exists(json_file):
 index = len(rep_list) # 如果index=0 测试所有数据
 print("index:",index)
 # 遍历数据
-for item in tqdm(mme_data[index:1], desc="Processing items"):
+for item in tqdm(mme_data[index:], desc="Processing items"):
     # item 包含视频路径，视频类别，问题，以及答案
     video_path = os.path.join(data_path, item['url'] + ".mp4")
     print("===========================================================rep_list")

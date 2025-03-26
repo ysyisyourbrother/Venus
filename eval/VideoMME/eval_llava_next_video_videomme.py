@@ -38,7 +38,19 @@ def parse_args():
         type=int,
         help="Specify the maximum number of video frames to process."
     )
-
+    parser.add_argument(
+        "--vlm_path",
+        help="Path to the pre-trained weights of the LLaVA-Video-7B-Qwen2 vision-language model.",
+        default=  "/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-NeXT-Video-7B", 
+    )
+    
+    parser.add_argument(
+        "--mme_data_path",
+        help="Path to the MME dataset",
+        default= "/root/nfs/download/dataset/lmms-lab/Video-MME"
+    )
+    parser.add_argument("--attn_implementation", type=str, default="flash_attention_2", 
+                        choices=["eager", "sdpa", "flash_attention_2"])
     return parser.parse_args()
 
 def llava_inference(qs, video):
@@ -75,27 +87,28 @@ def llava_inference(qs, video):
     
     text_outputs = tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
     return text_outputs 
+
 args = parse_args() 
 device = "cuda"
 max_frames_num = args.max_frames_num
 overwrite_config = {}
 overwrite_config["mm_spatial_pool_mode"] =  "average"
 tokenizer, model, image_processor, max_length = load_pretrained_model(
-    "/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-NeXT-Video-7B", 
+    args.vlm_path , 
     None, 
     "llava_qwen", 
     torch_dtype="bfloat16", 
     load_in_8bit=False,
     load_in_4bit=False,
     overwrite_config=overwrite_config, 
+    attn_implementation=args.attn_implementation,
     device_map="auto")  # Add any other thing you want to pass in llava_model_args
 model.eval()
 conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
 print(model)
-data_path = "/root/nfs/download/dataset/lmms-lab/Video-MME"
+data_path = args.mme_data_path # mp4 data path
 print("MME data path: ", data_path)
-# TODO: change to videomme_json_file.json (complete file)
-with open(f"eval/{args.video_duration_type}.json", 'r', encoding='utf-8') as file:
+with open(f"eval/VideoMME/{args.video_duration_type}.json", 'r', encoding='utf-8') as file:
     mme_data = json.load(file)
 # save result 
 os.makedirs("eval/results", exist_ok=True)

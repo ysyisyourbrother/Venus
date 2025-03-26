@@ -63,6 +63,7 @@ def save_json (data, path):
         json.dump(data, file, ensure_ascii=False, indent=4)
 def save_frames(frames, path):
     file_paths = []
+    path = path 
     if not os.path.exists(path):
         os.makedirs(path)
     for i, frame in enumerate(frames):
@@ -121,6 +122,7 @@ def parse_args():
         action='store_true',
         help= "Whether use filtered frames.",
     )
+    parser.add_argument("--attn_implementation", type=str, default="eager")
     return parser.parse_args()
 if __name__ == "__main__":
     args = parse_args() 
@@ -134,15 +136,15 @@ if __name__ == "__main__":
     # load MME data
     data_path = "/root/nfs/download/dataset/lmms-lab/Video-MME" # mp4 data path
     filter_frame_path = "/root/nfs/download/dataset/lmms-lab/short_frame"
-    with open("eval/short.json", 'r', encoding='utf-8') as file:
+    with open("eval/VideoMME/short.json", 'r', encoding='utf-8') as file:
         mme_data = json.load(file)
     # choose on video from Video-MME, you cal also change to other video or your video file
-    index =  35
+    index =  231
     item = mme_data[index]
     video_path = os.path.join(data_path, item['url'] + ".mp4")
     # uniform sample frames for video
     frames, frame_time, video_time = process_video(video_path, max_frames_num,12, force_sample=True) #  
-    save_frames([f for f in frames], "temp/video_frames_uniform_sampled")
+    save_frames([f for f in frames], f"temp/{item['url']}/video_frames_uniform_sampled")
     # frame filter
     if args.filtered: 
         frames = get_filtered_frames(filter_frame_path,item['url'])
@@ -153,18 +155,26 @@ if __name__ == "__main__":
     query = [question['question']]
     for o in question['options']:
         query.append(o)
+    # query = " ".join(query)#NOTE
     rag_data["content"] = item 
     rag_data["query"] = query
+    print("query",query)
+
     #####################################################################
     # create video database
     embedding_model = load_embedding_model("/root/nfs/codespace/llm-models/MLLM/BAAI/BGE-VL-base")
     yolo_model =  YOLO("motivation/yolo11l.pt").to(device)
     ocr_model =  easyocr.Reader(['en'])
     v_database = VideoDataBase(embedding_model, 512, yolo_model, ocr_model)
+    start_time = time.time()
     v_database.add_frames(raw_video)
+    end_time = time.time() 
+    rag_data["bge_frame_time"] = end_time - start_time
     v_database.print_index_ntotal()
+    rag_data["total_frame"] = len(raw_video)
     rag_data["ocr_list"] = v_database.ocr_list
     rag_data["det_list"] = v_database.det_list
+    
     #####################################################################
     # create asr database
     whisper_model, whisper_processor = load_audio_model( "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large", device = device)
@@ -182,7 +192,7 @@ if __name__ == "__main__":
         if len(v_idx) == 0: #TODO: 存在选择帧数为0的情况
             v_top_documents, v_idx = v_database.retrieve_documents_top_k(query, top_k=top_k)
     else:
-        v_top_documents, v_idx = v_database.retrieve_documents_top_k(query,top_k=20 )
+        v_top_documents, v_idx = v_database.retrieve_documents_top_k(query,top_k=top_k )
     rag_data["v_idx"] = v_idx
     # retrieve asr
     a_top_documents,a_idx = a_database.retrieve_documents_with_dynamic(query, threshold=0.2)
@@ -191,9 +201,9 @@ if __name__ == "__main__":
     rag_data["a_idx"] = a_idx
     selected_frame = [ d["frame"] for d in v_top_documents] 
     if not args.filtered:
-        save_frames( selected_frame, "temp/video_frames_uniform_selected")
+        save_frames( selected_frame, f"temp/{item['url']}/video_frames_uniform_selected")
     else:
-        save_frames( selected_frame, "temp/video_frames_filter_selected")
+        save_frames( selected_frame, f"temp/{item['url']}/video_frames_filter_selected")
     selected_det =  [ d["det"] for d in v_top_documents] 
     rag_data["selected_det"] = selected_det
     selected_det = [i for i in selected_det if i != ""]
@@ -217,16 +227,19 @@ if __name__ == "__main__":
     rag_question +=  "Select the best answer to the following multiple-choice question based on the video and the information (if given). Respond with only the letter (A, B, C, or D) of the correct option. Question: " + \
                         question['question'] + '\n' + " ".join(question['options']) + '\nThe best answer is:'
     print("rag_question",rag_question)
-
+    if args.filtered:
+        save_json(rag_data,f"temp/{item['url']}/rag_data_filtered.json")
+    else:
+        save_json(rag_data,f"temp/{item['url']}/rag_data.json")
     #####################################################################
     # load your VLM
     print("load LLaVA-Video-7B-Qwen2.................................")
-    device_map = {'model.vision_tower': 0, 'model.mm_projector': 0, 'model.norm': 0, 'model.rotary_emb': 0, 'model.embed_tokens': 0, 'model.image_newline': 0, 
-                    'model.layers.0': 1, 'model.layers.1': 1, 'model.layers.2': 1, 'model.layers.3': 1, 'model.layers.4': 1, 'model.layers.5': 1, 'model.layers.6': 1, 
-                    'model.layers.7': 1, 'model.layers.8': 1, 'model.layers.9': 1, 'model.layers.10': 1, 'model.layers.11': 1, 'model.layers.12': 1, 'model.layers.13': 1, 
-                    'model.layers.14': 1, 'model.layers.15': 1, 'model.layers.16': 1, 'model.layers.17': 1, 
-                    'model.layers.18': 2, 'model.layers.19': 2, 'model.layers.20': 2, 'model.layers.21': 2, 'model.layers.22': 2,  'model.layers.23': 2, 'model.layers.24': 2, 'model.layers.25': 2, 'model.layers.26': 2, 'model.layers.27': 2, 
-                    'lm_head': 2}    
+    # device_map = {'model.vision_tower': 0, 'model.mm_projector': 0, 'model.norm': 0, 'model.rotary_emb': 0, 'model.embed_tokens': 0, 'model.image_newline': 0, 
+    #             'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model.layers.4': 0, 'model.layers.5': 0, 'model.layers.6': 0, 
+    #             'model.layers.7': 0, 'model.layers.8': 0, 'model.layers.9': 0, 'model.layers.10': 0, 'model.layers.11': 0, 'model.layers.12': 0, 'model.layers.13': 10, 
+    #             'model.layers.14':0, 'model.layers.15': 0, 'model.layers.16': 0, 'model.layers.17': 0, 
+    #             'model.layers.18': 0, 'model.layers.19': 0, 'model.layers.20': 1, 'model.layers.21': 1, 'model.layers.22': 1,  'model.layers.23': 1, 'model.layers.24': 1, 'model.layers.25': 1, 'model.layers.26': 1, 'model.layers.27': 1, 
+    #             'lm_head': 1} 
     overwrite_config = {}
     overwrite_config["mm_spatial_pool_mode"] =  "average"
     mem_before = torch.cuda.max_memory_allocated( )
@@ -237,8 +250,9 @@ if __name__ == "__main__":
         torch_dtype="bfloat16", 
         load_in_8bit=False,
         load_in_4bit=False, 
-        # device_map="auto",
-        device_map=device_map,
+        device_map="auto",
+        # device_map=device_map,
+        attn_implementation=args.attn_implementation,
         overwrite_config=overwrite_config)  # Add any other thing you want to pass in llava_model_args
     
     mem_after = torch.cuda.max_memory_allocated( )
@@ -247,18 +261,18 @@ if __name__ == "__main__":
     conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
     #################################################################
     # naive inference
-    print("======================================================")
-    print("inference with naive.................................")
-    naive_question =  "Select the best answer to the following multiple-choice question based on the video and the information (if given). Respond with only the letter (A, B, C, or D) of the correct option. Question: " + \
-                        question['question'] + '\n' + " ".join(question['options']) + '\nThe best answer is:'
-    video = image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].cuda().bfloat16()
-    video = [video]
-    print(len(video[0])) #  max frames
-    print( (video[0].shape)) # torch.Size([max_frames, 3, 384, 384])
-    text_outputs = llava_inference(model,tokenizer, naive_question, video)
-    print(text_outputs)
-    rag_data["naive_question"] = naive_question
-    rag_data["naive_inference_answer"] = text_outputs
+    # print("======================================================")
+    # print("inference with naive.................................")
+    # naive_question =  "Select the best answer to the following multiple-choice question based on the video and the information (if given). Respond with only the letter (A, B, C, or D) of the correct option. Question: " + \
+    #                     question['question'] + '\n' + " ".join(question['options']) + '\nThe best answer is:'
+    # video = image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].cuda().bfloat16()
+    # video = [video]
+    # print(len(video[0])) #  max frames
+    # print( (video[0].shape)) # torch.Size([max_frames, 3, 384, 384])
+    # text_outputs = llava_inference(model,tokenizer, naive_question, video)
+    # print(text_outputs)
+    # rag_data["naive_question"] = naive_question
+    # rag_data["naive_inference_answer"] = text_outputs
     ##################################################################
     # inference with RAG
     print("======================================================")
@@ -268,4 +282,8 @@ if __name__ == "__main__":
     text_outputs = llava_inference(model,tokenizer, rag_question, selected_video)
     rag_data["rag_question"] = rag_question
     rag_data["rag_inference_answer"] = text_outputs    
-    save_json(rag_data,"temp/rag_data.json")
+    if args.filtered:
+        save_json(rag_data,f"temp/{item['url']}/rag_data_filtered.json")
+    else:
+        save_json(rag_data,f"temp/{item['url']}/rag_data.json")
+    print(  torch.cuda.max_memory_allocated( ) / 1024 / 1024/ 1024)

@@ -118,7 +118,7 @@ def eval_your_results(
     # Load your results
     with open(your_results_path, 'r') as f:
         your_results = json.load(f)
-
+        print(len(your_results))
     if isinstance(video_types, str):
         video_types = video_types.split(",")
 
@@ -145,7 +145,7 @@ def eval_your_results(
         v_sub_type_dict[video_type] = {}
         for v_sub_type in SUB_CATEGORIES:
             v_sub_type_dict[video_type][v_sub_type] = {"correct": 0, "answered": 0}
-
+        print("len(your_results_video_type)")
         if not skip_missing:
             # Check if the number of files in your results and ground truth are the same
             

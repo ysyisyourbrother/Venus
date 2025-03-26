@@ -65,7 +65,7 @@ def parse_args():
     """
     Parse command-line arguments.
     """
-    parser = argparse.ArgumentParser(description="Evaluate LLaVA-Video with VideoMME settings.")
+    parser = argparse.ArgumentParser(description="Evaluate LLaVA-Video on VideoMME Benchmark.")
     parser.add_argument(
         "--video_duration_type",
         required=True,
@@ -96,11 +96,50 @@ def parse_args():
         action='store_true',
         help= "Whether use filtered frames.",
     )
+    parser.add_argument(
+    "--all_uniformed_frames",
+    action='store_true',
+    help="Use all uniformly sampled frames."
+    )   
+    parser.add_argument(
+        "--vlm_path",
+        help="Path to the pre-trained weights of the LLaVA-Video-7B-Qwen2 vision-language model.",
+        default="/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-Video-7B-Qwen2"
+    )
+    parser.add_argument(
+        "--bge_path",
+        help="Path to the pre-trained weights of the BGE-VL model.",
+        default="/root/nfs/codespace/llm-models/MLLM/BAAI/BGE-VL-base"
+    )
+    parser.add_argument(
+        "--whisper_path",
+        help="Path to the pre-trained weights of OpenAI's Whisper speech recognition model.",
+        default= "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large"
+    )
+    parser.add_argument(
+        "--yolo_path",
+         help="Path to the YOLO model weights used for object detection.",
+        default= "motivation/yolo11l.pt"
+    )
+    parser.add_argument(
+        "--mme_data_path",
+        help="Path to the MME dataset",
+        default= "/root/nfs/download/dataset/lmms-lab/Video-MME"
+    )
+    parser.add_argument(
+        "--filtered_frame_path",
+        help="Path to the directory storing filtered video frames",
+        default= "/root/nfs/download/dataset/lmms-lab/short_frame" 
+    )
+    parser.add_argument("--attn_implementation", type=str, default="flash_attention_2", 
+                        choices=["eager", "sdpa", "flash_attention_2"])
     return parser.parse_args()
 
 if __name__ == "__main__":
     device = "cuda"
     args = parse_args() 
+    if args.filtered and args.video_duration_type != "short":
+        raise NotImplementedError
     max_frames_num =  args.max_frames_num
     threshold =  args.threshold
     asr_threshold = args.threshold
@@ -108,22 +147,23 @@ if __name__ == "__main__":
     # load your VLM
     print("load LLaVA-Video-7B-Qwen2.................................")
     # device_map = {'model.vision_tower': 0, 'model.mm_projector': 0, 'model.norm': 0, 'model.rotary_emb': 0, 'model.embed_tokens': 0, 'model.image_newline': 0, 
-    #             'model.layers.0': 1, 'model.layers.1': 1, 'model.layers.2': 1, 'model.layers.3': 1, 'model.layers.4': 1, 'model.layers.5': 1, 'model.layers.6': 1, 
+    #             'model.layers.0': 0, 'model.layers.1': 0, 'model.layers.2': 0, 'model.layers.3': 0, 'model.layers.4': 0, 'model.layers.5': 0, 'model.layers.6': 0, 
     #             'model.layers.7': 1, 'model.layers.8': 1, 'model.layers.9': 1, 'model.layers.10': 1, 'model.layers.11': 1, 'model.layers.12': 1, 'model.layers.13': 1, 
     #             'model.layers.14': 1, 'model.layers.15': 1, 'model.layers.16': 1, 'model.layers.17': 1, 
-    #             'model.layers.18': 2, 'model.layers.19': 2, 'model.layers.20': 2, 'model.layers.21': 2, 'model.layers.22': 2,  'model.layers.23': 2, 'model.layers.24': 2, 'model.layers.25': 2, 'model.layers.26': 2, 'model.layers.27': 2, 
-    #             'lm_head': 2}
+    #             'model.layers.18': 1, 'model.layers.19': 1, 'model.layers.20': 1, 'model.layers.21': 1, 'model.layers.22': 1,  'model.layers.23': 1, 'model.layers.24': 1, 'model.layers.25': 1, 'model.layers.26': 1, 'model.layers.27': 1, 
+    #             'lm_head': 1}
     overwrite_config = {}
     overwrite_config["mm_spatial_pool_mode"] =  "average"
     mem_before = torch.cuda.max_memory_allocated( )
     tokenizer, model, image_processor, max_length = load_pretrained_model(
-        "/root/nfs/codespace/llm-models/MLLM/lmms-lab/LLaVA-Video-7B-Qwen2", 
+        args.vlm_path , 
         None, 
         "llava_qwen", 
         torch_dtype="bfloat16", 
         load_in_8bit=False,
         load_in_4bit=False, 
         # device_map= device_map,
+        attn_implementation=args.attn_implementation,
         device_map="auto",
         overwrite_config=overwrite_config)  # Add any other thing you want to pass in llava_model_args
     # print(model)
@@ -133,14 +173,13 @@ if __name__ == "__main__":
     conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
     # load other models
     device = "cuda"
-    embedding_model = load_embedding_model("/root/nfs/codespace/llm-models/MLLM/BAAI/BGE-VL-base", device = device)
-    yolo_model =  YOLO("motivation/yolo11l.pt").to(device)
+    embedding_model = load_embedding_model( args.bge_path, device = device)
+    yolo_model =  YOLO( args.yolo_path).to(device)
     ocr_model =  easyocr.Reader(['en']) #TODO: 是否要多语言
-    whisper_model, whisper_processor = load_audio_model( "/root/nfs/codespace/llm-models/MLLM/openai/whisper-large", device = device)
+    whisper_model, whisper_processor = load_audio_model(args.whisper_path, device = device)
     # load MME data
-    data_path = "/root/nfs/download/dataset/lmms-lab/Video-MME" # mp4 data path
-    filter_frame_path = "/root/nfs/download/dataset/lmms-lab/short_frame" # filtered frame path
-
+    data_path = args.mme_data_path # mp4 data path
+    filter_frame_path = args.filtered_frame_path# filtered frame path
     video_duration_type  =  args.video_duration_type
     with open(f"eval/VideoMME/{video_duration_type}.json", 'r', encoding='utf-8') as file:
         mme_data = json.load(file)
@@ -149,6 +188,8 @@ if __name__ == "__main__":
     os.makedirs("eval/results", exist_ok=True)
     if args.filtered:
         result_file = f"eval/results/eval_venus_videomme_{video_duration_type}_{max_frames_num}_{threshold}_{top_k}_filtered.json"
+    elif args.all_uniformed_frames:
+        result_file = f"eval/results/eval_venus_videomme_{video_duration_type}_{max_frames_num}_{threshold}_{top_k}_all_uniformed_frames.json"
     else:
         result_file = f"eval/results/eval_venus_videomme_{video_duration_type}_{max_frames_num}_{threshold}_{top_k}.json"
     rep_list = []
@@ -162,7 +203,8 @@ if __name__ == "__main__":
     # 遍历数据,从上一次中断的地方开始
     for item in tqdm(mme_data[index:], desc="Processing items"): 
         print("video id:",item['video_id'])
-        if item['video_id'] == "500"   or item['video_id'] == "523" or item['video_id'] == "001" or item['video_id'] == "200":
+        skip = ["331"]
+        if item['video_id'] in skip:
             continue
         video_path = os.path.join(data_path, item['url'] + ".mp4")
         print("video_path",video_path)
@@ -178,8 +220,11 @@ if __name__ == "__main__":
         print( "len(raw_video)",len(raw_video))
         #####################################################################
         # create video database
+        start_time = time.time()
         v_database = VideoDataBase(embedding_model, 512, yolo_model, ocr_model)
         v_database.add_frames(raw_video)
+        end_time = time.time() 
+        content["create_v_db_time"] = end_time - start_time
         v_database.print_index_ntotal()
         #####################################################################
         # create asr database
@@ -193,8 +238,6 @@ if __name__ == "__main__":
         a_database.print_index_ntotal()
         #####################################################################
         # 遍历问题
-        #TODO: 这里的 query是多个query list videorag 有处理多个query list的实现 type query <class 'list'>
-        # bge encoder [list str]
         for q_num, question in enumerate(content['questions']): 
             query = [question['question']]
             for o in question['options']:
@@ -203,12 +246,14 @@ if __name__ == "__main__":
             print("type query",type(query)) 
             print("query",query)
             #TODO: 问题超过77 tokens
-            if not args.filtered:
+            if  args.filtered:
+                v_top_documents, v_idx = v_database.retrieve_documents_top_k(query, top_k=top_k)
+            elif  args.all_uniformed_frames:
+                v_top_documents, v_idx = v_database.retrieve_documents_top_k(query, top_k=max_frames_num)
+            else:
                 v_top_documents, v_idx = v_database.retrieve_documents_with_dynamic(query, threshold=threshold )
                 if len(v_idx) == 0: #TODO: 存在选择帧数为0的情况
                     v_top_documents, v_idx = v_database.retrieve_documents_top_k(query, top_k=top_k)
-            else:
-                v_top_documents, v_idx = v_database.retrieve_documents_top_k(query, top_k=top_k)
             selected_frame = [ d["frame"] for d in v_top_documents] 
             selected_det =  [ d["det"] for d in v_top_documents] 
             selected_det = [i for i in selected_det if i != ""]
